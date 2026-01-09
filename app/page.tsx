@@ -1,21 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
-  User,
+  type User,
 } from "firebase/auth";
 import {
-  addDoc,
   collection,
   doc,
   getDoc,
   getDocs,
-  limit,
   orderBy,
   query,
   setDoc,
@@ -89,9 +86,16 @@ function randomMantra(key: GoalKey) {
 }
 
 export default function HomePage() {
+  // Auth state
   const [ready, setReady] = useState(false);
-  const [uid, setUid] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const uid = user?.uid ?? null;
 
+  // Simple email auth UI state
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  // App state
   const [date, setDate] = useState(todayISO());
   const [entry, setEntry] = useState<DailyEntry>(() => ({
     date: todayISO(),
@@ -115,24 +119,19 @@ export default function HomePage() {
     []
   );
 
-  // Sign in anonymously
+  // ✅ Auth listener (replaces anonymous auth)
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await signInAnonymously(auth);
-        setUid(res.user.uid);
-        setReady(true);
-      } catch (e: any) {
-        console.error(e);
-        setStatus(`Firebase auth error: ${String(e?.message ?? e)}`);
-        setReady(true);
-      }
-    })();
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setReady(true);
+    });
+    return () => unsub();
   }, []);
 
   // Load entry for selected date (if exists)
   useEffect(() => {
     if (!uid) return;
+
     (async () => {
       setStatus("");
       setEntry({
@@ -162,6 +161,7 @@ export default function HomePage() {
   // Load month stats
   useEffect(() => {
     if (!uid) return;
+
     (async () => {
       try {
         const mk = monthKey(date);
@@ -196,15 +196,14 @@ export default function HomePage() {
 
     const pct = (k: GoalKey) =>
       count === 0 ? 0 : Math.round((sum[k] / (count * 5)) * 100);
+
     const monthDoc = {
       material: pct("material"),
       ego: pct("ego"),
       running: pct("running"),
     };
 
-    await setDoc(doc(db, "users", uid, "months", mk), monthDoc, {
-      merge: true,
-    });
+    await setDoc(doc(db, "users", uid, "months", mk), monthDoc, { merge: true });
     setMonthStats(monthDoc);
   }
 
@@ -236,6 +235,48 @@ export default function HomePage() {
     }
   }
 
+  async function handleSignIn() {
+    setStatus("");
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+      setEmail("");
+      setPassword("");
+      // user will populate via onAuthStateChanged
+    } catch (e: any) {
+      console.error(e);
+      setStatus(`Sign-in error: ${String(e?.message ?? e)}`);
+    }
+  }
+
+  async function handleSignUp() {
+    setStatus("");
+    try {
+      await createUserWithEmailAndPassword(auth, email.trim(), password);
+      setEmail("");
+      setPassword("");
+    } catch (e: any) {
+      console.error(e);
+      setStatus(`Sign-up error: ${String(e?.message ?? e)}`);
+    }
+  }
+
+  async function handleSignOut() {
+    setStatus("");
+    try {
+      await signOut(auth);
+      setMonthStats(null);
+      setDate(todayISO());
+      setEntry({
+        date: todayISO(),
+        rating: { material: 3, ego: 3, running: 3 },
+        notes: { material: "", ego: "", running: "" },
+      });
+    } catch (e: any) {
+      console.error(e);
+      setStatus(`Sign-out error: ${String(e?.message ?? e)}`);
+    }
+  }
+
   if (!ready) {
     return (
       <main className="min-h-screen p-6">
@@ -245,15 +286,96 @@ export default function HomePage() {
     );
   }
 
+  // ✅ If not signed in, show login form
+  if (!user) {
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-50">
+        <div className="mx-auto max-w-md px-5 py-10">
+          <h1 className="text-3xl font-semibold tracking-tight">2026 Goals</h1>
+          <p className="mt-2 text-sm text-zinc-300">
+            Sign in with the same email on every device to see the same entries.
+          </p>
+
+          <div className="mt-6 space-y-3 rounded-2xl bg-zinc-900 p-5 ring-1 ring-zinc-800">
+            <div>
+              <label className="text-xs text-zinc-400">Email</label>
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                type="email"
+                autoComplete="email"
+                className="mt-1 w-full rounded-lg bg-zinc-950 px-3 py-2 text-sm text-zinc-50 ring-1 ring-zinc-800"
+                placeholder="you@example.com"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-zinc-400">Password</label>
+              <input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type="password"
+                autoComplete="current-password"
+                className="mt-1 w-full rounded-lg bg-zinc-950 px-3 py-2 text-sm text-zinc-50 ring-1 ring-zinc-800"
+                placeholder="••••••••"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                onClick={handleSignIn}
+                className="flex-1 rounded-xl bg-zinc-50 px-4 py-3 text-sm font-semibold text-zinc-950"
+              >
+                Sign in
+              </button>
+              <button
+                onClick={handleSignUp}
+                className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm font-semibold text-zinc-50 ring-1 ring-zinc-700"
+              >
+                Create account
+              </button>
+            </div>
+
+            {status && <div className="text-sm text-zinc-300">{status}</div>}
+
+            <p className="text-xs text-zinc-500">
+              Tip: use a strong password; Firebase will manage sessions so you
+              stay signed in.
+            </p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // ✅ Signed-in app
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-50">
       <div className="mx-auto max-w-3xl px-5 py-8">
         <header className="mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight">2026 Goals</h1>
-          <p className="mt-2 text-zinc-300">
-            Daily check-in for your three goals. Rate yesterday (or any day),
-            add notes, and track monthly progress.
-          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight">
+                2026 Goals
+              </h1>
+              <p className="mt-2 text-zinc-300">
+                Daily check-in for your three goals. Rate yesterday (or any
+                day), add notes, and track monthly progress.
+              </p>
+              <p className="mt-2 text-xs text-zinc-500">
+                Signed in as: {user.email ?? "(no email)"}{" "}
+                <span className="text-zinc-700">•</span> UID:{" "}
+                <span className="text-zinc-600">{uid}</span>
+              </p>
+            </div>
+
+            <button
+              onClick={handleSignOut}
+              className="rounded-xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-zinc-50 ring-1 ring-zinc-800"
+            >
+              Sign out
+            </button>
+          </div>
 
           <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -361,7 +483,8 @@ export default function HomePage() {
         </div>
 
         <footer className="mt-10 text-xs text-zinc-500">
-          Signed in anonymously. Data is stored per device/user ID in Firestore.
+          Signed in with email. Data is stored under your Firebase user ID and
+          will sync across devices when you sign in with the same account.
         </footer>
       </div>
     </main>
