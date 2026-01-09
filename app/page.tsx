@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
-import { signInAnonymously } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  User,
+} from "firebase/auth";
 import {
   addDoc,
   collection,
